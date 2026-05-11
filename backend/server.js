@@ -9,13 +9,12 @@ const JWT_SECRET = "snippet_manager_secret_2024";
 
 app.use(cors());
 app.use(express.json());
-
 const db = mysql.createConnection({
-  host: "localhost",
-  user: "root",
-  password: "",
-  database: "snippetdb",
-  port: "3307"
+  host: process.env.MYSQLHOST || "localhost", 
+  user: process.env.MYSQLUSER || "root",
+  password: process.env.MYSQLPASSWORD || "",
+  database: process.env.MYSQLDATABASE || "snippetdb",
+  port: process.env.MYSQLPORT || 3307 
 });
 
 db.connect((err) => {

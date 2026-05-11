@@ -28,12 +28,12 @@ function App() {
   const [outputs, setOutputs] = useState({});
   const [filter, setFilter] = useState("all");
 
-  // Edit mode
+
   const [editingId, setEditingId] = useState(null);
   const [editTitle, setEditTitle] = useState("");
   const [editCode, setEditCode] = useState("");
 
-  // Version history modal
+
   const [versionsFor, setVersionsFor] = useState(null);
   const [versions, setVersions] = useState([]);
   const [versionsTitle, setVersionsTitle] = useState("");
@@ -206,12 +206,12 @@ function App() {
         <input placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
         <input placeholder="Tags (comma-separated)" value={tags} onChange={(e) => setTags(e.target.value)} />
         <div className="form-row">
-          <select onChange={(e) => setLanguage(e.target.value)}>
-            <option>javascript</option>
-            <option>python</option>
-            <option>html</option>
-          </select>
-          <select value={expiresIn} onChange={(e) => setExpiresIn(e.target.value)} className="expiry-select">
+          <select class="language-select">
+  <option>javascript</option>
+  <option selected>python</option>
+  <option>html</option>
+</select>
+          <select value={expiresIn} onChange={(e) => setExpiresIn(e.target.value)} className="language-select">
             <option value="">⏳ No Expiry</option>
             <option value="1">⏱ Expires in 1 hour</option>
             <option value="6">⏱ Expires in 6 hours</option>
