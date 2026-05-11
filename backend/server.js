@@ -9,15 +9,14 @@ const JWT_SECRET = "snippet_manager_secret_2024";
 
 app.use(cors());
 app.use(express.json());
-
 const db = mysql.createConnection({
-  // This tells the code: "Use the Railway Host if it exists, otherwise use localhost"
+  // If online, use Railway's address. If at home, use localhost.
   host: process.env.MYSQLHOST || "localhost",
   user: process.env.MYSQLUSER || "root",
   password: process.env.MYSQLPASSWORD || "",
   database: process.env.MYSQLDATABASE || "snippetdb",
-  // Railway uses 3306 by default, your local used 3307
-  port: process.env.MYSQLPORT || 3307 
+  // Railway usually uses 3306; your local setup used 3307.
+  port: process.env.MYSQLPORT || 3307
 });
 
 db.connect((err) => {
