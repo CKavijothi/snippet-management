@@ -20,7 +20,7 @@ function App() {
   const [snippets, setSnippets] = useState([]);
   const [title, setTitle] = useState("");
   const [code, setCode] = useState("");
-  const [language, setLanguage] = useState("javascript");
+const [language] = useState("javascript");
   const [isPublic, setIsPublic] = useState(false);
   const [tags, setTags] = useState("");
   const [expiresIn, setExpiresIn] = useState("");
@@ -45,7 +45,7 @@ function App() {
     } catch (err) { console.log(err); }
   };
 
-  useEffect(() => { if (user) fetchSnippets(""); }, [user]);
+useEffect(() => { if (user) fetchSnippets(""); }, [user]);
 
   if (!user) return <AuthPage />;
 
