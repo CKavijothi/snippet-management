@@ -8,13 +8,21 @@ const app = express();
 const JWT_SECRET = "snippet_manager_secret_2024";
 
 app.use(cors());
-app.use(express.json());
-const db = mysql.createConnection({
-  host: process.env.MYSQLHOST || "localhost", 
+app.use(express.json());const db = mysql.createConnection({
+  // If Railway provides an address, use it. Otherwise, use localhost.
+  host: process.env.MYSQLHOST || "localhost",
+  
+  // If Railway provides a user, use it. Otherwise, use root.
   user: process.env.MYSQLUSER || "root",
+  
+  // If Railway provides a password, use it. Otherwise, leave it empty.
   password: process.env.MYSQLPASSWORD || "",
+  
+  // If Railway provides a database name, use it. Otherwise, use snippetdb.
   database: process.env.MYSQLDATABASE || "snippetdb",
-  port: process.env.MYSQLPORT || 3307 
+  
+  // Railway usually uses 3306. Your local setup uses 3307.
+  port: process.env.MYSQLPORT || 3307
 });
 
 db.connect((err) => {
