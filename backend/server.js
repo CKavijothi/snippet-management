@@ -6,12 +6,21 @@ const jwt = require("jsonwebtoken");
 
 const app = express();
 
-const PORT = process.env.PORT || 5000;
-const JWT_SECRET =
-  process.env.JWT_SECRET || "snippet_manager_secret_2024";
-app.use(cors({
-  origin: "*"
-}));
+// 1. CORS first
+app.use(cors());
+app.options("*", cors());
+
+// 2. JSON parser
+app.use(express.json());
+
+// 3. DB connection AFTER middleware
+const db = mysql.createConnection({
+  host: process.env.MYSQLHOST || "localhost",
+  user: process.env.MYSQLUSER || "root",
+  password: process.env.MYSQLPASSWORD || "",
+  database: process.env.MYSQLDATABASE || "snippetdb",
+  port: process.env.MYSQLPORT || 3307,
+});
 
 db.connect((err) => {
   if (err) {
@@ -20,7 +29,6 @@ db.connect((err) => {
     console.log("MySQL Connected");
   }
 });
-
 /* =========================
    AUTH MIDDLEWARE
 ========================= */
