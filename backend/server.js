@@ -12,16 +12,20 @@ const JWT_SECRET =
 
 app.use(
   cors({
-    origin: [
-      "http://localhost:3000",
-      "https://snippet-management.vercel.app",
-    ],
+   origin: [
+    "http://localhost:3000",
+    "https://snippet-management.vercel.app",
+    "https://snippet-management-fxsqg4n26-ckavijothis-projects.vercel.app" // ← add pannu
+  ],
     credentials: true,
   })
 );
 
 app.use(express.json());
 
+/* =========================
+   DATABASE CONNECTION
+========================= */
 
 const db = mysql.createConnection({
   host: process.env.MYSQLHOST || "localhost",
@@ -39,6 +43,9 @@ db.connect((err) => {
   }
 });
 
+/* =========================
+   AUTH MIDDLEWARE
+========================= */
 
 const authMiddleware = (req, res, next) => {
   const token = req.headers["authorization"]?.split(" ")[1];
@@ -60,6 +67,9 @@ const authMiddleware = (req, res, next) => {
   }
 };
 
+/* =========================
+   REGISTER
+========================= */
 
 app.post("/api/auth/register", async (req, res) => {
   const { name, email, password } = req.body;
@@ -132,6 +142,10 @@ app.post("/api/auth/register", async (req, res) => {
   );
 });
 
+/* =========================
+   LOGIN
+========================= */
+
 app.post("/api/auth/login", (req, res) => {
   const { email, password } = req.body;
 
@@ -194,6 +208,10 @@ app.post("/api/auth/login", (req, res) => {
   );
 });
 
+/* =========================
+   GET SNIPPETS
+========================= */
+
 app.get("/api/snippets", authMiddleware, (req, res) => {
   const search = req.query.search || "";
   const userId = req.user.id;
@@ -242,6 +260,10 @@ app.get("/api/snippets", authMiddleware, (req, res) => {
     }
   );
 });
+
+/* =========================
+   ADD SNIPPET
+========================= */
 
 app.post("/api/snippets", authMiddleware, (req, res) => {
   const {
@@ -319,6 +341,10 @@ app.post("/api/snippets", authMiddleware, (req, res) => {
   );
 });
 
+/* =========================
+   DELETE SNIPPET
+========================= */
+
 app.delete(
   "/api/snippets/:id",
   authMiddleware,
@@ -346,6 +372,10 @@ app.delete(
     );
   }
 );
+
+/* =========================
+   UPDATE VISIBILITY
+========================= */
 
 app.patch(
   "/api/snippets/:id/visibility",
@@ -377,6 +407,10 @@ app.patch(
     );
   }
 );
+
+/* =========================
+   UPDATE SNIPPET
+========================= */
 
 app.put("/api/snippets/:id", authMiddleware, (req, res) => {
   const { title, code } = req.body;
@@ -429,6 +463,9 @@ app.put("/api/snippets/:id", authMiddleware, (req, res) => {
   );
 });
 
+/* =========================
+   GET VERSIONS
+========================= */
 
 app.get(
   "/api/snippets/:id/versions",
@@ -452,6 +489,10 @@ app.get(
     );
   }
 );
+
+/* =========================
+   RESTORE VERSION
+========================= */
 
 app.post(
   "/api/snippets/:id/restore/:versionId",
@@ -494,6 +535,9 @@ app.post(
   }
 );
 
+/* =========================
+   START SERVER
+========================= */
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
