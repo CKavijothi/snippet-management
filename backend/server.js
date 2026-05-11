@@ -7,7 +7,13 @@ const jwt = require("jsonwebtoken");
 const app = express();
 const JWT_SECRET = "snippet_manager_secret_2024";
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    "http://localhost:3000",
+    "https://snippet-management.vercel.app"
+  ],
+  credentials: true
+}));
 app.use(express.json());
 
 const db = mysql.createConnection({
