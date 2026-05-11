@@ -7,10 +7,11 @@ import AuthPage from "./AuthPage";
 import "./App.css";
 
 let pyodide = null;
+const API_URL = "https://snippet-management-production.up.railway.app";
 
 const api = (token) =>
   axios.create({
-    baseURL: "http://localhost:5000",
+    baseURL: API_URL,
     headers: { Authorization: `Bearer ${token}` }
   });
 
