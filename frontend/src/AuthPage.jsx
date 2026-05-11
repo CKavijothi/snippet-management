@@ -16,10 +16,12 @@ export default function AuthPage() {
     setError("");
     setLoading(true);
     try {
-      const endpoint =
-        mode === "login"
-          ? "http://localhost:5000/api/auth/login"
-          : "http://localhost:5000/api/auth/register";
+      const API_URL = "https://snippet-backend-production.up.railway.app";
+
+const endpoint =
+  mode === "login"
+    ? `${API_URL}/api/auth/login`
+    : `${API_URL}/api/auth/register`;
 
       const payload =
         mode === "login"
