@@ -16,7 +16,7 @@ export default function AuthPage() {
     setError("");
     setLoading(true);
     try {
-      const API_URL = "https://snippet-backend-production.up.railway.app";
+      const API_URL = "https://snippet-management-production.up.railway.app";
 
 const endpoint =
   mode === "login"
