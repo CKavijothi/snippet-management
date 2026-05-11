@@ -3,6 +3,10 @@ const cors = require("cors");
 const mysql = require("mysql2");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const { execSync } = require("child_process");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
 const app = express();
 
@@ -40,6 +44,65 @@ const authMiddleware = (req, res, next) => {
     return res.status(401).json({ message: "Invalid token" });
   }
 };
+
+// ✅ NEW: Run code endpoint — supports javascript and python
+app.post("/api/run", authMiddleware, (req, res) => {
+  const { code, language } = req.body;
+  if (!code) return res.status(400).json({ output: "No code provided" });
+
+  // Write code to a temp file and execute it
+  const tmpDir = os.tmpdir();
+
+  if (language === "javascript") {
+    const tmpFile = path.join(tmpDir, `snippet_${Date.now()}.js`);
+    try {
+      fs.writeFileSync(tmpFile, code);
+      const output = execSync(`node "${tmpFile}"`, {
+        timeout: 5000,       // 5 second timeout
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"]
+      });
+      fs.unlinkSync(tmpFile);
+      return res.json({ output: output || "No output" });
+    } catch (err) {
+      try { fs.unlinkSync(tmpFile); } catch (_) {}
+      return res.json({ output: err.stderr || err.message || "Runtime error" });
+    }
+  }
+
+  if (language === "python") {
+    const tmpFile = path.join(tmpDir, `snippet_${Date.now()}.py`);
+    try {
+      fs.writeFileSync(tmpFile, code);
+      // Try python3 first, fall back to python
+      let output;
+      try {
+        output = execSync(`python3 "${tmpFile}"`, {
+          timeout: 5000,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"]
+        });
+      } catch (e) {
+        if (e.stderr && e.stderr.includes("not found")) {
+          output = execSync(`python "${tmpFile}"`, {
+            timeout: 5000,
+            encoding: "utf-8",
+            stdio: ["pipe", "pipe", "pipe"]
+          });
+        } else {
+          throw e;
+        }
+      }
+      fs.unlinkSync(tmpFile);
+      return res.json({ output: output || "No output" });
+    } catch (err) {
+      try { fs.unlinkSync(tmpFile); } catch (_) {}
+      return res.json({ output: err.stderr || err.message || "Runtime error" });
+    }
+  }
+
+  return res.json({ output: `Running ${language} is not supported yet` });
+});
 
 app.post("/api/auth/register", async (req, res) => {
   const { name, email, password } = req.body;
