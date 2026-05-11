@@ -21,7 +21,8 @@ function App() {
   const [snippets, setSnippets] = useState([]);
   const [title, setTitle] = useState("");
   const [code, setCode] = useState("");
-const [language] = useState("javascript");
+  // ✅ FIX 1: language is now stateful so it updates when user selects
+  const [language, setLanguage] = useState("javascript");
   const [isPublic, setIsPublic] = useState(false);
   const [tags, setTags] = useState("");
   const [expiresIn, setExpiresIn] = useState("");
@@ -29,11 +30,9 @@ const [language] = useState("javascript");
   const [outputs, setOutputs] = useState({});
   const [filter, setFilter] = useState("all");
 
-
   const [editingId, setEditingId] = useState(null);
   const [editTitle, setEditTitle] = useState("");
   const [editCode, setEditCode] = useState("");
-
 
   const [versionsFor, setVersionsFor] = useState(null);
   const [versions, setVersions] = useState([]);
@@ -46,7 +45,7 @@ const [language] = useState("javascript");
     } catch (err) { console.log(err); }
   };
 
-useEffect(() => { if (user) fetchSnippets(""); }, [user]);
+  useEffect(() => { if (user) fetchSnippets(""); }, [user]);
 
   if (!user) return <AuthPage />;
 
@@ -102,27 +101,83 @@ useEffect(() => { if (user) fetchSnippets(""); }, [user]);
     alert("Version restored!");
   };
 
+  // ✅ FIX 2: runCode uses sandboxed iframe instead of eval()
   const runCode = async (id, codeText, lang) => {
-    let output = "";
+    if (lang === "html") {
+      // HTML is already shown in iframe in the output section, nothing to do
+      setOutputs(prev => ({ ...prev, [id]: "__html__" }));
+      return;
+    }
+
     if (lang === "javascript") {
-      try {
-        const logs = [];
-        const oldLog = console.log;
-        console.log = (v) => logs.push(String(v));
-        eval(codeText);
-        console.log = oldLog;
-        output = logs.join("\n") || "No output";
-      } catch (err) { output = err.message; }
+      setOutputs(prev => ({ ...prev, [id]: "Running..." }));
+
+      // Remove any existing iframe for this snippet
+      const existing = document.getElementById(`run-frame-${id}`);
+      if (existing) existing.remove();
+
+      const iframe = document.createElement("iframe");
+      iframe.id = `run-frame-${id}`;
+      iframe.sandbox = "allow-scripts"; // ✅ sandboxed — no print, no page access
+      iframe.style.display = "none";
+
+      // Capture console.log and errors inside the iframe
+      const escaped = codeText
+        .replace(/\\/g, "\\\\")
+        .replace(/`/g, "\\`");
+
+      iframe.srcdoc = `
+        <script>
+          const logs = [];
+          const _log = console.log;
+          console.log = (...args) => { logs.push(args.map(String).join(" ")); };
+          console.error = (...args) => { logs.push("ERROR: " + args.map(String).join(" ")); };
+          try {
+            ${codeText}
+          } catch(e) {
+            logs.push("Error: " + e.message);
+          }
+          window.parent.postMessage({ snippetId: ${id}, output: logs.join("\\n") || "No output" }, "*");
+        <\/script>
+      `;
+
+      document.body.appendChild(iframe);
+      return;
     }
+
     if (lang === "python") {
-      setOutputs(prev => ({ ...prev, [id]: "Loading Python..." }));
-      if (!pyodide) pyodide = await window.loadPyodide();
-      await pyodide.runPythonAsync(`import sys, io\nsys.stdout = io.StringIO()`);
-      await pyodide.runPythonAsync(codeText);
-      output = await pyodide.runPythonAsync("sys.stdout.getvalue()");
+      setOutputs(prev => ({ ...prev, [id]: "Loading Python runtime..." }));
+      try {
+        if (!pyodide) {
+          pyodide = await window.loadPyodide({
+            indexURL: "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/"
+          });
+        }
+        await pyodide.runPythonAsync(`import sys, io\nsys.stdout = io.StringIO()\nsys.stderr = io.StringIO()`);
+        await pyodide.runPythonAsync(codeText);
+        const out = await pyodide.runPythonAsync("sys.stdout.getvalue()");
+        const err = await pyodide.runPythonAsync("sys.stderr.getvalue()");
+        setOutputs(prev => ({ ...prev, [id]: out || err || "No output" }));
+      } catch (err) {
+        setOutputs(prev => ({ ...prev, [id]: "Error: " + err.message }));
+      }
     }
-    setOutputs(prev => ({ ...prev, [id]: output }));
   };
+
+  // ✅ FIX 3: Listen for postMessage from sandboxed iframe
+  useEffect(() => {
+    const handler = (event) => {
+      if (event.data && event.data.snippetId !== undefined) {
+        const { snippetId, output } = event.data;
+        setOutputs(prev => ({ ...prev, [snippetId]: output }));
+        // Clean up the hidden iframe
+        const iframe = document.getElementById(`run-frame-${snippetId}`);
+        if (iframe) iframe.remove();
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, []);
 
   const formatExpiry = (exp) => {
     if (!exp) return null;
@@ -141,7 +196,7 @@ useEffect(() => { if (user) fetchSnippets(""); }, [user]);
 
   return (
     <div className="app">
-     
+
       {versionsFor && (
         <div className="modal-overlay" onClick={() => setVersionsFor(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
@@ -207,11 +262,16 @@ useEffect(() => { if (user) fetchSnippets(""); }, [user]);
         <input placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
         <input placeholder="Tags (comma-separated)" value={tags} onChange={(e) => setTags(e.target.value)} />
         <div className="form-row">
-          <select class="language-select">
-  <option>javascript</option>
-  <option selected>python</option>
-  <option>html</option>
-</select>
+          {/* ✅ FIX 1: language select now uses value + onChange */}
+          <select
+            className="language-select"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+          >
+            <option value="javascript">javascript</option>
+            <option value="python">python</option>
+            <option value="html">html</option>
+          </select>
           <select value={expiresIn} onChange={(e) => setExpiresIn(e.target.value)} className="language-select">
             <option value="">⏳ No Expiry</option>
             <option value="1">⏱ Expires in 1 hour</option>
@@ -231,16 +291,14 @@ useEffect(() => { if (user) fetchSnippets(""); }, [user]);
         </div>
       </div>
 
-      {/* NEW SINGLE COLUMN LAYOUT - NO GRID */}
       <div className="app-main">
         <div className="card-container">
           {filtered.map((s, index) => (
-            <div 
-              className="card" 
-              key={s.id} 
+            <div
+              className="card"
+              key={s.id}
               style={{animationDelay: `${index * 0.15}s`}}
             >
-              {/* Header */}
               <div className="cardHeader">
                 <h3>{s.title}</h3>
                 <div className="card-meta">
@@ -251,7 +309,6 @@ useEffect(() => { if (user) fetchSnippets(""); }, [user]);
                 </div>
               </div>
 
-              {/* Snippet Info */}
               <div className="card-sub">
                 <span className="author">
                   by {s.author_name}{Number(s.user_id) === Number(user.id) ? " (you)" : ""}
@@ -263,7 +320,6 @@ useEffect(() => { if (user) fetchSnippets(""); }, [user]);
                 )}
               </div>
 
-              {/* Edit Mode or Code Display */}
               {editingId === s.id ? (
                 <div className="edit-box">
                   <input
@@ -282,8 +338,8 @@ useEffect(() => { if (user) fetchSnippets(""); }, [user]);
                     <button className="save-edit" onClick={() => saveEdit(s.id)}>
                       💾 Save Changes
                     </button>
-                    <button 
-                      className="cancel-edit" 
+                    <button
+                      className="cancel-edit"
                       onClick={() => setEditingId(null)}
                     >
                       Cancel
@@ -298,11 +354,10 @@ useEffect(() => { if (user) fetchSnippets(""); }, [user]);
                 </div>
               )}
 
-              {/* Controls */}
               <div className="controls-section">
                 <div className="actions">
-                  <button 
-                    className="run" 
+                  <button
+                    className="run"
                     onClick={() => runCode(s.id, s.code, s.language)}
                   >
                     ▶ Run Code
@@ -326,12 +381,15 @@ useEffect(() => { if (user) fetchSnippets(""); }, [user]);
                 </div>
               </div>
 
-              {/* Integrated Output Section */}
               <div className="output-section">
                 <div className="outputTitle">Output</div>
                 <div className="outputContent">
                   {s.language === "html" ? (
-                    <iframe srcDoc={s.code} title={`preview-${s.id}`} />
+                    <iframe
+                      srcDoc={s.code}
+                      title={`preview-${s.id}`}
+                      sandbox="allow-scripts"
+                    />
                   ) : (
                     <pre>{outputs[s.id] || "Click Run to see output"}</pre>
                   )}
@@ -339,7 +397,7 @@ useEffect(() => { if (user) fetchSnippets(""); }, [user]);
               </div>
             </div>
           ))}
-          
+
           {filtered.length === 0 && (
             <div className="empty-state">
               <div className="empty-icon">📝</div>
