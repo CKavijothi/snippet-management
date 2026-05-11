@@ -12,15 +12,18 @@ const JWT_SECRET =
 
 app.use(
   cors({
-   origin: [
-    "http://localhost:3000",
-    "https://snippet-management.vercel.app",
-    "https://snippet-management-fxsqg4n26-ckavijothis-projects.vercel.app" // ← add pannu
-  ],
+    origin: function(origin, callback) {
+      if (!origin || 
+          origin.includes('localhost') || 
+          origin.includes('vercel.app')) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: true,
   })
 );
-
 app.use(express.json());
 
 /* =========================
