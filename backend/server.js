@@ -5,24 +5,30 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
 const app = express();
-const JWT_SECRET = "snippet_manager_secret_2024";
 
-app.use(cors({
-  origin: [
-    "http://localhost:3000",
-    "https://snippet-management.vercel.app"
-  ],
-  credentials: true
-}));
+const PORT = process.env.PORT || 5000;
+const JWT_SECRET =
+  process.env.JWT_SECRET || "snippet_manager_secret_2024";
+
+app.use(
+  cors({
+    origin: [
+      "http://localhost:3000",
+      "https://snippet-management.vercel.app",
+    ],
+    credentials: true,
+  })
+);
+
 app.use(express.json());
 
+
 const db = mysql.createConnection({
-  // This pulls the host, user, and password directly from the Railway variables you see on your screen
   host: process.env.MYSQLHOST || "localhost",
   user: process.env.MYSQLUSER || "root",
   password: process.env.MYSQLPASSWORD || "",
-  database: process.env.MYSQLDATABASE || "railway", 
-  port: process.env.MYSQLPORT || 3306
+  database: process.env.MYSQLDATABASE || "snippetdb",
+  port: process.env.MYSQLPORT || 3307,
 });
 
 db.connect((err) => {
@@ -33,11 +39,14 @@ db.connect((err) => {
   }
 });
 
+
 const authMiddleware = (req, res, next) => {
   const token = req.headers["authorization"]?.split(" ")[1];
 
   if (!token) {
-    return res.status(401).json({ message: "No token provided" });
+    return res.status(401).json({
+      message: "No token provided",
+    });
   }
 
   try {
@@ -45,16 +54,19 @@ const authMiddleware = (req, res, next) => {
     req.user = decoded;
     next();
   } catch (err) {
-    return res.status(401).json({ message: "Invalid token" });
+    return res.status(401).json({
+      message: "Invalid token",
+    });
   }
 };
+
 
 app.post("/api/auth/register", async (req, res) => {
   const { name, email, password } = req.body;
 
   if (!name || !email || !password) {
     return res.status(400).json({
-      message: "All fields are required"
+      message: "All fields are required",
     });
   }
 
@@ -64,12 +76,14 @@ app.post("/api/auth/register", async (req, res) => {
     async (err, rows) => {
       if (err) {
         console.log("REGISTER ERROR:", err);
-        return res.status(500).json({ message: "Database error" });
+        return res.status(500).json({
+          message: "Database error",
+        });
       }
 
       if (rows.length > 0) {
         return res.status(400).json({
-          message: "Email already registered"
+          message: "Email already registered",
         });
       }
 
@@ -83,7 +97,7 @@ app.post("/api/auth/register", async (req, res) => {
             if (err2) {
               console.log("INSERT USER ERROR:", err2);
               return res.status(500).json({
-                message: "Database error"
+                message: "Database error",
               });
             }
 
@@ -91,7 +105,7 @@ app.post("/api/auth/register", async (req, res) => {
               {
                 id: result.insertId,
                 name,
-                email
+                email,
               },
               JWT_SECRET,
               { expiresIn: "7d" }
@@ -102,26 +116,28 @@ app.post("/api/auth/register", async (req, res) => {
               user: {
                 id: result.insertId,
                 name,
-                email
-              }
+                email,
+              },
             });
           }
         );
       } catch (hashErr) {
         console.log(hashErr);
-        res.status(500).json({ message: "Server error" });
+
+        res.status(500).json({
+          message: "Server error",
+        });
       }
     }
   );
 });
-
 
 app.post("/api/auth/login", (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
     return res.status(400).json({
-      message: "All fields are required"
+      message: "All fields are required",
     });
   }
 
@@ -131,24 +147,28 @@ app.post("/api/auth/login", (req, res) => {
     async (err, rows) => {
       if (err) {
         console.log("LOGIN ERROR:", err);
+
         return res.status(500).json({
-          message: "Database error"
+          message: "Database error",
         });
       }
 
       if (rows.length === 0) {
         return res.status(401).json({
-          message: "Invalid credentials"
+          message: "Invalid credentials",
         });
       }
 
       const user = rows[0];
 
-      const match = await bcrypt.compare(password, user.password);
+      const match = await bcrypt.compare(
+        password,
+        user.password
+      );
 
       if (!match) {
         return res.status(401).json({
-          message: "Invalid credentials"
+          message: "Invalid credentials",
         });
       }
 
@@ -156,7 +176,7 @@ app.post("/api/auth/login", (req, res) => {
         {
           id: user.id,
           name: user.name,
-          email: user.email
+          email: user.email,
         },
         JWT_SECRET,
         { expiresIn: "7d" }
@@ -167,17 +187,17 @@ app.post("/api/auth/login", (req, res) => {
         user: {
           id: user.id,
           name: user.name,
-          email: user.email
-        }
+          email: user.email,
+        },
       });
     }
   );
 });
+
 app.get("/api/snippets", authMiddleware, (req, res) => {
   const search = req.query.search || "";
   const userId = req.user.id;
 
-  // Delete expired snippets
   db.query(
     "DELETE FROM snippets WHERE expires_at IS NOT NULL AND expires_at <= NOW()",
     (err) => {
@@ -210,7 +230,7 @@ app.get("/api/snippets", authMiddleware, (req, res) => {
       userId,
       `%${search}%`,
       `%${search}%`,
-      `%${search}%`
+      `%${search}%`,
     ],
     (err, result) => {
       if (err) {
@@ -230,7 +250,7 @@ app.post("/api/snippets", authMiddleware, (req, res) => {
     language,
     is_public,
     tags,
-    expires_in
+    expires_in,
   } = req.body;
 
   const userId = req.user.id;
@@ -242,15 +262,10 @@ app.post("/api/snippets", authMiddleware, (req, res) => {
 
     d.setHours(d.getHours() + Number(expires_in));
 
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-
-    const hours = String(d.getHours()).padStart(2, "0");
-    const minutes = String(d.getMinutes()).padStart(2, "0");
-    const seconds = String(d.getSeconds()).padStart(2, "0");
-
-    expiresAt = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    expiresAt = d
+      .toISOString()
+      .slice(0, 19)
+      .replace("T", " ");
   }
 
   db.query(
@@ -265,7 +280,7 @@ app.post("/api/snippets", authMiddleware, (req, res) => {
       code,
       language,
       is_public ? 1 : 0,
-      expiresAt
+      expiresAt,
     ],
     (err, result) => {
       if (err) {
@@ -282,44 +297,14 @@ app.post("/api/snippets", authMiddleware, (req, res) => {
         [result.insertId, code, title]
       );
 
-     
       if (tags && tags.length > 0) {
         tags.forEach((tag) => {
           db.query(
             "INSERT IGNORE INTO tags (name) VALUES (?)",
             [tag],
-            (e, tagResult) => {
+            (e) => {
               if (e) {
                 console.log(e);
-                return;
-              }
-
-              if (tagResult.insertId) {
-                db.query(
-                  `
-                  INSERT INTO snippet_tags
-                  (snippet_id, tag_id)
-                  VALUES (?,?)
-                  `,
-                  [result.insertId, tagResult.insertId]
-                );
-              } else {
-                db.query(
-                  "SELECT id FROM tags WHERE name=?",
-                  [tag],
-                  (e2, rows) => {
-                    if (rows && rows[0]) {
-                      db.query(
-                        `
-                        INSERT INTO snippet_tags
-                        (snippet_id, tag_id)
-                        VALUES (?,?)
-                        `,
-                        [result.insertId, rows[0].id]
-                      );
-                    }
-                  }
-                );
               }
             }
           );
@@ -328,61 +313,70 @@ app.post("/api/snippets", authMiddleware, (req, res) => {
 
       res.json({
         message: "Snippet added successfully",
-        id: result.insertId
+        id: result.insertId,
       });
     }
   );
 });
-app.delete("/api/snippets/:id", authMiddleware, (req, res) => {
-  const userId = req.user.id;
 
-  db.query(
-    "DELETE FROM snippets WHERE id=? AND user_id=?",
-    [req.params.id, userId],
-    (err, result) => {
-      if (err) {
-        return res.status(500).json(err);
-      }
+app.delete(
+  "/api/snippets/:id",
+  authMiddleware,
+  (req, res) => {
+    const userId = req.user.id;
 
-      if (result.affectedRows === 0) {
-        return res.status(403).json({
-          message: "Not allowed"
+    db.query(
+      "DELETE FROM snippets WHERE id=? AND user_id=?",
+      [req.params.id, userId],
+      (err, result) => {
+        if (err) {
+          return res.status(500).json(err);
+        }
+
+        if (result.affectedRows === 0) {
+          return res.status(403).json({
+            message: "Not allowed",
+          });
+        }
+
+        res.json({
+          message: "Deleted successfully",
         });
       }
+    );
+  }
+);
 
-      res.json({
-        message: "Deleted successfully"
-      });
-    }
-  );
-});
+app.patch(
+  "/api/snippets/:id/visibility",
+  authMiddleware,
+  (req, res) => {
+    const { is_public } = req.body;
+    const userId = req.user.id;
 
-app.patch("/api/snippets/:id/visibility", authMiddleware, (req, res) => {
-  const { is_public } = req.body;
-  const userId = req.user.id;
+    db.query(
+      `
+      UPDATE snippets
+      SET is_public=?
+      WHERE id=? AND user_id=?
+      `,
+      [
+        is_public ? 1 : 0,
+        req.params.id,
+        userId,
+      ],
+      (err) => {
+        if (err) {
+          return res.status(500).json(err);
+        }
 
-  db.query(
-    `
-    UPDATE snippets
-    SET is_public=?
-    WHERE id=? AND user_id=?
-    `,
-    [
-      is_public ? 1 : 0,
-      req.params.id,
-      userId
-    ],
-    (err) => {
-      if (err) {
-        return res.status(500).json(err);
+        res.json({
+          message: "Visibility updated",
+        });
       }
-
-      res.json({
-        message: "Visibility updated"
-      });
-    }
-  );
-});
+    );
+  }
+);
 
 app.put("/api/snippets/:id", authMiddleware, (req, res) => {
   const { title, code } = req.body;
@@ -425,7 +419,7 @@ app.put("/api/snippets/:id", authMiddleware, (req, res) => {
               }
 
               res.json({
-                message: "Snippet updated"
+                message: "Snippet updated",
               });
             }
           );
@@ -435,24 +429,29 @@ app.put("/api/snippets/:id", authMiddleware, (req, res) => {
   );
 });
 
-app.get("/api/snippets/:id/versions", authMiddleware, (req, res) => {
-  db.query(
-    `
-    SELECT *
-    FROM snippet_versions
-    WHERE snippet_id=?
-    ORDER BY version_number DESC
-    `,
-    [req.params.id],
-    (err, rows) => {
-      if (err) {
-        return res.status(500).json(err);
-      }
 
-      res.json(rows);
-    }
-  );
-});
+app.get(
+  "/api/snippets/:id/versions",
+  authMiddleware,
+  (req, res) => {
+    db.query(
+      `
+      SELECT *
+      FROM snippet_versions
+      WHERE snippet_id=?
+      ORDER BY version_number DESC
+      `,
+      [req.params.id],
+      (err, rows) => {
+        if (err) {
+          return res.status(500).json(err);
+        }
+
+        res.json(rows);
+      }
+    );
+  }
+);
 
 app.post(
   "/api/snippets/:id/restore/:versionId",
@@ -467,7 +466,7 @@ app.post(
       (err, rows) => {
         if (err || !rows[0]) {
           return res.status(404).json({
-            message: "Version not found"
+            message: "Version not found",
           });
         }
 
@@ -486,7 +485,7 @@ app.post(
             }
 
             res.json({
-              message: "Version restored"
+              message: "Version restored",
             });
           }
         );
@@ -495,6 +494,7 @@ app.post(
   }
 );
 
-app.listen(5000, () => {
-  console.log("Server running at http://localhost:5000");
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
