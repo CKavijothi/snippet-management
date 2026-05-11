@@ -6,7 +6,11 @@ import { useAuth } from "./AuthContext";
 import AuthPage from "./AuthPage";
 import "./App.css";
 
+// ✅ Block any accidental window.print() calls from libraries (e.g. Pyodide)
+window.print = () => {};
+
 let pyodide = null;
+let pyodideLoading = false;
 const API_URL = "https://snippet-management-production.up.railway.app";
 
 const api = (token) =>
@@ -148,18 +152,38 @@ function App() {
     if (lang === "python") {
       setOutputs(prev => ({ ...prev, [id]: "Loading Python runtime..." }));
       try {
-        if (!pyodide) {
+        // ✅ Inject Pyodide script tag only once if not already loaded
+        if (!window.loadPyodide) {
+          await new Promise((resolve, reject) => {
+            const existing = document.getElementById("pyodide-script");
+            if (existing) { resolve(); return; }
+            const script = document.createElement("script");
+            script.id = "pyodide-script";
+            script.src = "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js";
+            script.onload = resolve;
+            script.onerror = () => reject(new Error("Failed to load Pyodide script"));
+            document.head.appendChild(script);
+          });
+        }
+
+        // ✅ Wait until loadPyodide is available
+        if (!pyodide && !pyodideLoading) {
+          pyodideLoading = true;
+          setOutputs(prev => ({ ...prev, [id]: "Initializing Python (first run takes ~5s)..." }));
           pyodide = await window.loadPyodide({
             indexURL: "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/"
           });
+          pyodideLoading = false;
         }
+
+        // Reset stdout/stderr
         await pyodide.runPythonAsync(`import sys, io\nsys.stdout = io.StringIO()\nsys.stderr = io.StringIO()`);
         await pyodide.runPythonAsync(codeText);
         const out = await pyodide.runPythonAsync("sys.stdout.getvalue()");
         const err = await pyodide.runPythonAsync("sys.stderr.getvalue()");
         setOutputs(prev => ({ ...prev, [id]: out || err || "No output" }));
       } catch (err) {
-        setOutputs(prev => ({ ...prev, [id]: "Error: " + err.message }));
+        setOutputs(prev => ({ ...prev, [id]: "Python Error: " + err.message }));
       }
     }
   };
