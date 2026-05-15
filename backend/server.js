@@ -1,3 +1,9 @@
+require('dotenv').config();   // ← ADD THIS FIRST
+
+const express = require("express");
+const cors = require("cors");
+const mysql = require("mysql2");
+// ... rest of your code
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2");
@@ -7,6 +13,8 @@ const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const https = require("https");
+const crypto = require("crypto");
 
 const app = express();
 
@@ -17,6 +25,7 @@ app.use(cors());
 app.options("*", cors());
 app.use(express.json());
 
+// ── Database ─────────────────────────────────────────────────────────────────
 const db = mysql.createConnection({
   host: process.env.MYSQLHOST || "localhost",
   user: process.env.MYSQLUSER || "root",
@@ -30,38 +39,91 @@ db.connect((err) => {
     console.log("DB Error:", err);
   } else {
     console.log("MySQL Connected");
+    // Auto-migrate: add google_id and picture columns if missing
+    db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(255) UNIQUE DEFAULT NULL`, () => {});
+    db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS picture VARCHAR(512) DEFAULT NULL`, () => {});
   }
 });
 
+// ── Auth Middleware ──────────────────────────────────────────────────────────
 const authMiddleware = (req, res, next) => {
   const token = req.headers["authorization"]?.split(" ")[1];
   if (!token) return res.status(401).json({ message: "No token provided" });
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    req.user = jwt.verify(token, JWT_SECRET);
     next();
-  } catch (err) {
+  } catch {
     return res.status(401).json({ message: "Invalid token" });
   }
 };
 
-// ✅ NEW: Run code endpoint — supports javascript and python
+// ── Google Token Verifier ────────────────────────────────────────────────────
+// Verifies the Google ID token (credential) using Google's public JWKS keys.
+// No extra npm packages required — uses built-in https + crypto + jsonwebtoken.
+function verifyGoogleToken(credential) {
+  return new Promise((resolve, reject) => {
+    const parts = credential.split(".");
+    if (parts.length !== 3) return reject(new Error("Invalid token format"));
+
+    let header, payload;
+    try {
+      header  = JSON.parse(Buffer.from(parts[0], "base64url").toString());
+      payload = JSON.parse(Buffer.from(parts[1], "base64url").toString());
+    } catch {
+      return reject(new Error("Failed to decode token"));
+    }
+
+    // Basic checks
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.exp < now)   return reject(new Error("Token expired"));
+    if (!payload.email)      return reject(new Error("No email in token"));
+    if (!["accounts.google.com", "https://accounts.google.com"].includes(payload.iss)) {
+      return reject(new Error("Invalid issuer"));
+    }
+
+    // Optional audience check
+    const CLIENT_ID = process.env.GOOGLE_CLIENT_ID || process.env.REACT_APP_GOOGLE_CLIENT_ID;
+    if (CLIENT_ID && payload.aud !== CLIENT_ID) {
+      return reject(new Error("Token audience mismatch"));
+    }
+
+    // Fetch Google's public keys and verify RS256 signature
+    https.get("https://www.googleapis.com/oauth2/v3/certs", (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        try {
+          const { keys } = JSON.parse(data);
+          const key = keys.find((k) => k.kid === header.kid);
+          if (!key) return reject(new Error("Matching public key not found"));
+
+          const pubKey = crypto.createPublicKey({ key, format: "jwk" });
+          const pem    = pubKey.export({ type: "spki", format: "pem" });
+
+          jwt.verify(credential, pem, { algorithms: ["RS256"] }, (err) => {
+            if (err) return reject(new Error("Signature verification failed: " + err.message));
+            resolve(payload);
+          });
+        } catch (e) {
+          reject(e);
+        }
+      });
+    }).on("error", reject);
+  });
+}
+
+// ── Run Code ─────────────────────────────────────────────────────────────────
 app.post("/api/run", authMiddleware, (req, res) => {
   const { code, language } = req.body;
   if (!code) return res.status(400).json({ output: "No code provided" });
 
-  // Write code to a temp file and execute it
   const tmpDir = os.tmpdir();
 
   if (language === "javascript") {
     const tmpFile = path.join(tmpDir, `snippet_${Date.now()}.js`);
     try {
       fs.writeFileSync(tmpFile, code);
-      const output = execSync(`node "${tmpFile}"`, {
-        timeout: 5000,       // 5 second timeout
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"]
-      });
+      const output = execSync(`node "${tmpFile}"`, { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
       fs.unlinkSync(tmpFile);
       return res.json({ output: output || "No output" });
     } catch (err) {
@@ -74,24 +136,13 @@ app.post("/api/run", authMiddleware, (req, res) => {
     const tmpFile = path.join(tmpDir, `snippet_${Date.now()}.py`);
     try {
       fs.writeFileSync(tmpFile, code);
-      // Try python3 first, fall back to python
       let output;
       try {
-        output = execSync(`python3 "${tmpFile}"`, {
-          timeout: 5000,
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "pipe"]
-        });
+        output = execSync(`python3 "${tmpFile}"`, { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
       } catch (e) {
-        if (e.stderr && e.stderr.includes("not found")) {
-          output = execSync(`python "${tmpFile}"`, {
-            timeout: 5000,
-            encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"]
-          });
-        } else {
-          throw e;
-        }
+        if (e.stderr?.includes("not found")) {
+          output = execSync(`python "${tmpFile}"`, { timeout: 5000, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+        } else throw e;
       }
       fs.unlinkSync(tmpFile);
       return res.json({ output: output || "No output" });
@@ -104,6 +155,7 @@ app.post("/api/run", authMiddleware, (req, res) => {
   return res.json({ output: `Running ${language} is not supported yet` });
 });
 
+// ── Register ─────────────────────────────────────────────────────────────────
 app.post("/api/auth/register", async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password)
@@ -113,10 +165,10 @@ app.post("/api/auth/register", async (req, res) => {
     if (err) return res.status(500).json({ message: "Database error" });
     if (rows.length > 0) return res.status(400).json({ message: "Email already registered" });
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashed = await bcrypt.hash(password, 10);
     db.query(
       "INSERT INTO users (name, email, password) VALUES (?,?,?)",
-      [name, email, hashedPassword],
+      [name, email, hashed],
       (err2, result) => {
         if (err2) return res.status(500).json({ message: "Database error" });
         const token = jwt.sign({ id: result.insertId, name, email }, JWT_SECRET, { expiresIn: "7d" });
@@ -126,6 +178,7 @@ app.post("/api/auth/register", async (req, res) => {
   });
 });
 
+// ── Login ─────────────────────────────────────────────────────────────────────
 app.post("/api/auth/login", (req, res) => {
   const { email, password } = req.body;
   if (!email || !password)
@@ -136,14 +189,86 @@ app.post("/api/auth/login", (req, res) => {
     if (rows.length === 0) return res.status(401).json({ message: "Invalid credentials" });
 
     const user = rows[0];
+
+    // Google-only accounts have no password
+    if (!user.password) {
+      return res.status(401).json({
+        message: "This account uses Google sign-in. Please use the Google button.",
+      });
+    }
+
     const match = await bcrypt.compare(password, user.password);
     if (!match) return res.status(401).json({ message: "Invalid credentials" });
 
-    const token = jwt.sign({ id: user.id, name: user.name, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
-    res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
+    const token = jwt.sign(
+      { id: user.id, name: user.name, email: user.email },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email, picture: user.picture || null } });
   });
 });
 
+// ── Google Sign-In ────────────────────────────────────────────────────────────
+app.post("/api/auth/google", async (req, res) => {
+  const { credential } = req.body;
+  if (!credential)
+    return res.status(400).json({ message: "Google credential is required" });
+
+  let payload;
+  try {
+    payload = await verifyGoogleToken(credential);
+  } catch (err) {
+    console.error("Google token error:", err.message);
+    return res.status(401).json({ message: "Google sign-in failed: " + err.message });
+  }
+
+  const { sub: googleId, email, name, picture } = payload;
+
+  // Find existing user by google_id OR email (links existing email accounts)
+  db.query(
+    "SELECT * FROM users WHERE google_id = ? OR email = ? LIMIT 1",
+    [googleId, email],
+    (err, rows) => {
+      if (err) return res.status(500).json({ message: "Database error" });
+
+      if (rows.length > 0) {
+        // Existing user — update google_id + picture
+        const user = rows[0];
+        db.query(
+          "UPDATE users SET google_id = ?, picture = ? WHERE id = ?",
+          [googleId, picture || user.picture, user.id],
+          () => {}
+        );
+        const token = jwt.sign(
+          { id: user.id, name: user.name, email: user.email },
+          JWT_SECRET,
+          { expiresIn: "7d" }
+        );
+        return res.json({
+          token,
+          user: { id: user.id, name: user.name, email: user.email, picture: picture || user.picture || null },
+        });
+      }
+
+      // New Google user — no password
+      db.query(
+        "INSERT INTO users (name, email, google_id, picture) VALUES (?,?,?,?)",
+        [name, email, googleId, picture || null],
+        (err2, result) => {
+          if (err2) return res.status(500).json({ message: "Database error" });
+          const token = jwt.sign({ id: result.insertId, name, email }, JWT_SECRET, { expiresIn: "7d" });
+          return res.json({
+            token,
+            user: { id: result.insertId, name, email, picture: picture || null },
+          });
+        }
+      );
+    }
+  );
+});
+
+// ── Snippets ──────────────────────────────────────────────────────────────────
 app.get("/api/snippets", authMiddleware, (req, res) => {
   const search = req.query.search || "";
   const userId = req.user.id;
@@ -188,9 +313,7 @@ app.post("/api/snippets", authMiddleware, (req, res) => {
         [result.insertId, code, title]
       );
       if (tags && tags.length > 0) {
-        tags.forEach((tag) => {
-          db.query("INSERT IGNORE INTO tags (name) VALUES (?)", [tag]);
-        });
+        tags.forEach((tag) => db.query("INSERT IGNORE INTO tags (name) VALUES (?)", [tag]));
       }
       res.json({ message: "Snippet added successfully", id: result.insertId });
     }
@@ -225,29 +348,25 @@ app.put("/api/snippets/:id", authMiddleware, (req, res) => {
   const { title, code } = req.body;
   const snippetId = req.params.id;
 
-  db.query(
-    "SELECT COUNT(*) AS cnt FROM snippet_versions WHERE snippet_id=?",
-    [snippetId],
-    (err, rows) => {
-      if (err) return res.status(500).json(err);
-      const nextVersion = rows[0].cnt + 1;
-      db.query(
-        "INSERT INTO snippet_versions (snippet_id, code, title, version_number) VALUES (?,?,?,?)",
-        [snippetId, code, title, nextVersion],
-        (err2) => {
-          if (err2) return res.status(500).json(err2);
-          db.query(
-            "UPDATE snippets SET title=?, code=? WHERE id=? AND user_id=?",
-            [title, code, snippetId, req.user.id],
-            (err3) => {
-              if (err3) return res.status(500).json(err3);
-              res.json({ message: "Snippet updated" });
-            }
-          );
-        }
-      );
-    }
-  );
+  db.query("SELECT COUNT(*) AS cnt FROM snippet_versions WHERE snippet_id=?", [snippetId], (err, rows) => {
+    if (err) return res.status(500).json(err);
+    const nextVersion = rows[0].cnt + 1;
+    db.query(
+      "INSERT INTO snippet_versions (snippet_id, code, title, version_number) VALUES (?,?,?,?)",
+      [snippetId, code, title, nextVersion],
+      (err2) => {
+        if (err2) return res.status(500).json(err2);
+        db.query(
+          "UPDATE snippets SET title=?, code=? WHERE id=? AND user_id=?",
+          [title, code, snippetId, req.user.id],
+          (err3) => {
+            if (err3) return res.status(500).json(err3);
+            res.json({ message: "Snippet updated" });
+          }
+        );
+      }
+    );
+  });
 });
 
 app.get("/api/snippets/:id/versions", authMiddleware, (req, res) => {
@@ -277,6 +396,4 @@ app.post("/api/snippets/:id/restore/:versionId", authMiddleware, (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
