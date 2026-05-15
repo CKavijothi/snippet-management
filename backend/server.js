@@ -1,5 +1,5 @@
 require("dotenv").config();
-
+ 
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2");
@@ -11,16 +11,16 @@ const path = require("path");
 const os = require("os");
 const https = require("https");
 const crypto = require("crypto");
-
+ 
 const app = express();
-
+ 
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || "snippet_manager_secret_2024";
-
+ 
 app.use(cors());
 app.options("*", cors());
 app.use(express.json());
-
+ 
 // ── Database ─────────────────────────────────────────────────────────────────
 const db = mysql.createPool({
   host: process.env.MYSQLHOST,
@@ -31,18 +31,19 @@ const db = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
 });
-
-db.connect((err) => {
+ 
+db.getConnection((err, connection) => {
   if (err) {
     console.log("DB Error:", err);
   } else {
     console.log("MySQL Connected");
+    connection.release();
     // Auto-migrate: add google_id and picture columns if missing
     db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(255) UNIQUE DEFAULT NULL`, () => {});
     db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS picture VARCHAR(512) DEFAULT NULL`, () => {});
   }
 });
-
+ 
 // ── Auth Middleware ──────────────────────────────────────────────────────────
 const authMiddleware = (req, res, next) => {
   const token = req.headers["authorization"]?.split(" ")[1];
@@ -54,13 +55,13 @@ const authMiddleware = (req, res, next) => {
     return res.status(401).json({ message: "Invalid token" });
   }
 };
-
+ 
 // ── Google Token Verifier ────────────────────────────────────────────────────
 function verifyGoogleToken(credential) {
   return new Promise((resolve, reject) => {
     const parts = credential.split(".");
     if (parts.length !== 3) return reject(new Error("Invalid token format"));
-
+ 
     let header, payload;
     try {
       header  = JSON.parse(Buffer.from(parts[0], "base64url").toString());
@@ -68,7 +69,7 @@ function verifyGoogleToken(credential) {
     } catch {
       return reject(new Error("Failed to decode token"));
     }
-
+ 
     // Basic checks
     const now = Math.floor(Date.now() / 1000);
     if (payload.exp < now)  return reject(new Error("Token expired"));
@@ -76,13 +77,13 @@ function verifyGoogleToken(credential) {
     if (!["accounts.google.com", "https://accounts.google.com"].includes(payload.iss)) {
       return reject(new Error("Invalid issuer"));
     }
-
+ 
     // Audience check
     const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
     if (CLIENT_ID && payload.aud !== CLIENT_ID) {
       return reject(new Error("Token audience mismatch"));
     }
-
+ 
     // Fetch Google's public keys and verify RS256 signature
     https.get("https://www.googleapis.com/oauth2/v3/certs", (res) => {
       let data = "";
@@ -92,10 +93,10 @@ function verifyGoogleToken(credential) {
           const { keys } = JSON.parse(data);
           const key = keys.find((k) => k.kid === header.kid);
           if (!key) return reject(new Error("Matching public key not found"));
-
+ 
           const pubKey = crypto.createPublicKey({ key, format: "jwk" });
           const pem    = pubKey.export({ type: "spki", format: "pem" });
-
+ 
           jwt.verify(credential, pem, { algorithms: ["RS256"] }, (err) => {
             if (err) return reject(new Error("Signature verification failed: " + err.message));
             resolve(payload);
@@ -107,14 +108,14 @@ function verifyGoogleToken(credential) {
     }).on("error", reject);
   });
 }
-
+ 
 // ── Run Code ─────────────────────────────────────────────────────────────────
 app.post("/api/run", authMiddleware, (req, res) => {
   const { code, language } = req.body;
   if (!code) return res.status(400).json({ output: "No code provided" });
-
+ 
   const tmpDir = os.tmpdir();
-
+ 
   if (language === "javascript") {
     const tmpFile = path.join(tmpDir, `snippet_${Date.now()}.js`);
     try {
@@ -127,7 +128,7 @@ app.post("/api/run", authMiddleware, (req, res) => {
       return res.json({ output: err.stderr || err.message || "Runtime error" });
     }
   }
-
+ 
   if (language === "python") {
     const tmpFile = path.join(tmpDir, `snippet_${Date.now()}.py`);
     try {
@@ -147,20 +148,20 @@ app.post("/api/run", authMiddleware, (req, res) => {
       return res.json({ output: err.stderr || err.message || "Runtime error" });
     }
   }
-
+ 
   return res.json({ output: `Running ${language} is not supported yet` });
 });
-
+ 
 // ── Register ─────────────────────────────────────────────────────────────────
 app.post("/api/auth/register", async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password)
     return res.status(400).json({ message: "All fields are required" });
-
+ 
   db.query("SELECT id FROM users WHERE email=?", [email], async (err, rows) => {
     if (err) return res.status(500).json({ message: "Database error" });
     if (rows.length > 0) return res.status(400).json({ message: "Email already registered" });
-
+ 
     const hashed = await bcrypt.hash(password, 10);
     db.query(
       "INSERT INTO users (name, email, password) VALUES (?,?,?)",
@@ -173,29 +174,29 @@ app.post("/api/auth/register", async (req, res) => {
     );
   });
 });
-
+ 
 // ── Login ─────────────────────────────────────────────────────────────────────
 app.post("/api/auth/login", (req, res) => {
   const { email, password } = req.body;
   if (!email || !password)
     return res.status(400).json({ message: "All fields are required" });
-
+ 
   db.query("SELECT * FROM users WHERE email=?", [email], async (err, rows) => {
     if (err) return res.status(500).json({ message: "Database error" });
     if (rows.length === 0) return res.status(401).json({ message: "Invalid credentials" });
-
+ 
     const user = rows[0];
-
+ 
     // Google-only accounts have no password
     if (!user.password) {
       return res.status(401).json({
         message: "This account uses Google sign-in. Please use the Google button.",
       });
     }
-
+ 
     const match = await bcrypt.compare(password, user.password);
     if (!match) return res.status(401).json({ message: "Invalid credentials" });
-
+ 
     const token = jwt.sign(
       { id: user.id, name: user.name, email: user.email },
       JWT_SECRET,
@@ -204,13 +205,13 @@ app.post("/api/auth/login", (req, res) => {
     res.json({ token, user: { id: user.id, name: user.name, email: user.email, picture: user.picture || null } });
   });
 });
-
+ 
 // ── Google Sign-In ────────────────────────────────────────────────────────────
 app.post("/api/auth/google", async (req, res) => {
   const { credential } = req.body;
   if (!credential)
     return res.status(400).json({ message: "Google credential is required" });
-
+ 
   let payload;
   try {
     payload = await verifyGoogleToken(credential);
@@ -218,15 +219,15 @@ app.post("/api/auth/google", async (req, res) => {
     console.error("Google token error:", err.message);
     return res.status(401).json({ message: "Google sign-in failed: " + err.message });
   }
-
+ 
   const { sub: googleId, email, name, picture } = payload;
-
+ 
   db.query(
     "SELECT * FROM users WHERE google_id = ? OR email = ? LIMIT 1",
     [googleId, email],
     (err, rows) => {
       if (err) return res.status(500).json({ message: "Database error" });
-
+ 
       if (rows.length > 0) {
         const user = rows[0];
         db.query(
@@ -244,7 +245,7 @@ app.post("/api/auth/google", async (req, res) => {
           user: { id: user.id, name: user.name, email: user.email, picture: picture || user.picture || null },
         });
       }
-
+ 
       // New Google user — no password
       db.query(
         "INSERT INTO users (name, email, google_id, picture) VALUES (?,?,?,?)",
@@ -261,16 +262,16 @@ app.post("/api/auth/google", async (req, res) => {
     }
   );
 });
-
+ 
 // ── Snippets ──────────────────────────────────────────────────────────────────
 app.get("/api/snippets", authMiddleware, (req, res) => {
   const search = req.query.search || "";
   const userId = req.user.id;
-
+ 
   db.query("DELETE FROM snippets WHERE expires_at IS NOT NULL AND expires_at <= NOW()", (err) => {
     if (err) console.log("Expiry Delete Error:", err);
   });
-
+ 
   const sql = `
     SELECT s.*, u.name AS author_name
     FROM snippets s
@@ -285,18 +286,18 @@ app.get("/api/snippets", authMiddleware, (req, res) => {
     res.json(result);
   });
 });
-
+ 
 app.post("/api/snippets", authMiddleware, (req, res) => {
   const { title, code, language, is_public, tags, expires_in } = req.body;
   const userId = req.user.id;
-
+ 
   let expiresAt = null;
   if (expires_in && Number(expires_in) > 0) {
     const d = new Date();
     d.setHours(d.getHours() + Number(expires_in));
     expiresAt = d.toISOString().slice(0, 19).replace("T", " ");
   }
-
+ 
   db.query(
     "INSERT INTO snippets (user_id, title, code, language, is_public, expires_at) VALUES (?,?,?,?,?,?)",
     [userId, title, code, language, is_public ? 1 : 0, expiresAt],
@@ -313,7 +314,7 @@ app.post("/api/snippets", authMiddleware, (req, res) => {
     }
   );
 });
-
+ 
 app.delete("/api/snippets/:id", authMiddleware, (req, res) => {
   db.query(
     "DELETE FROM snippets WHERE id=? AND user_id=?",
@@ -325,7 +326,7 @@ app.delete("/api/snippets/:id", authMiddleware, (req, res) => {
     }
   );
 });
-
+ 
 app.patch("/api/snippets/:id/visibility", authMiddleware, (req, res) => {
   const { is_public } = req.body;
   db.query(
@@ -337,11 +338,11 @@ app.patch("/api/snippets/:id/visibility", authMiddleware, (req, res) => {
     }
   );
 });
-
+ 
 app.put("/api/snippets/:id", authMiddleware, (req, res) => {
   const { title, code } = req.body;
   const snippetId = req.params.id;
-
+ 
   db.query("SELECT COUNT(*) AS cnt FROM snippet_versions WHERE snippet_id=?", [snippetId], (err, rows) => {
     if (err) return res.status(500).json(err);
     const nextVersion = rows[0].cnt + 1;
@@ -362,7 +363,7 @@ app.put("/api/snippets/:id", authMiddleware, (req, res) => {
     );
   });
 });
-
+ 
 app.get("/api/snippets/:id/versions", authMiddleware, (req, res) => {
   db.query(
     "SELECT * FROM snippet_versions WHERE snippet_id=? ORDER BY version_number DESC",
@@ -373,7 +374,7 @@ app.get("/api/snippets/:id/versions", authMiddleware, (req, res) => {
     }
   );
 });
-
+ 
 app.post("/api/snippets/:id/restore/:versionId", authMiddleware, (req, res) => {
   const { id, versionId } = req.params;
   db.query("SELECT * FROM snippet_versions WHERE id=?", [versionId], (err, rows) => {
@@ -389,5 +390,5 @@ app.post("/api/snippets/:id/restore/:versionId", authMiddleware, (req, res) => {
     );
   });
 });
-
+ 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
