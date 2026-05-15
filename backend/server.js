@@ -1,9 +1,5 @@
-require('dotenv').config();   // ← ADD THIS FIRST
+require("dotenv").config();
 
-const express = require("express");
-const cors = require("cors");
-const mysql = require("mysql2");
-// ... rest of your code
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2");
@@ -58,8 +54,6 @@ const authMiddleware = (req, res, next) => {
 };
 
 // ── Google Token Verifier ────────────────────────────────────────────────────
-// Verifies the Google ID token (credential) using Google's public JWKS keys.
-// No extra npm packages required — uses built-in https + crypto + jsonwebtoken.
 function verifyGoogleToken(credential) {
   return new Promise((resolve, reject) => {
     const parts = credential.split(".");
@@ -75,14 +69,14 @@ function verifyGoogleToken(credential) {
 
     // Basic checks
     const now = Math.floor(Date.now() / 1000);
-    if (payload.exp < now)   return reject(new Error("Token expired"));
-    if (!payload.email)      return reject(new Error("No email in token"));
+    if (payload.exp < now)  return reject(new Error("Token expired"));
+    if (!payload.email)     return reject(new Error("No email in token"));
     if (!["accounts.google.com", "https://accounts.google.com"].includes(payload.iss)) {
       return reject(new Error("Invalid issuer"));
     }
 
-    // Optional audience check
-    const CLIENT_ID = process.env.GOOGLE_CLIENT_ID || process.env.REACT_APP_GOOGLE_CLIENT_ID;
+    // Audience check
+    const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
     if (CLIENT_ID && payload.aud !== CLIENT_ID) {
       return reject(new Error("Token audience mismatch"));
     }
@@ -225,7 +219,6 @@ app.post("/api/auth/google", async (req, res) => {
 
   const { sub: googleId, email, name, picture } = payload;
 
-  // Find existing user by google_id OR email (links existing email accounts)
   db.query(
     "SELECT * FROM users WHERE google_id = ? OR email = ? LIMIT 1",
     [googleId, email],
@@ -233,7 +226,6 @@ app.post("/api/auth/google", async (req, res) => {
       if (err) return res.status(500).json({ message: "Database error" });
 
       if (rows.length > 0) {
-        // Existing user — update google_id + picture
         const user = rows[0];
         db.query(
           "UPDATE users SET google_id = ?, picture = ? WHERE id = ?",
