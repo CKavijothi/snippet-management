@@ -22,12 +22,14 @@ app.options("*", cors());
 app.use(express.json());
 
 // ── Database ─────────────────────────────────────────────────────────────────
-const db = mysql.createConnection({
-  host: process.env.MYSQLHOST || "localhost",
-  user: process.env.MYSQLUSER || "root",
-  password: process.env.MYSQLPASSWORD || "",
-  database: process.env.MYSQLDATABASE || "snippetdb",
-  port: process.env.MYSQLPORT || 3307,
+const db = mysql.createPool({
+  host: process.env.MYSQLHOST,
+  user: process.env.MYSQLUSER,
+  password: process.env.MYSQLPASSWORD,
+  database: process.env.MYSQLDATABASE,
+  port: process.env.MYSQLPORT || 3306,
+  waitForConnections: true,
+  connectionLimit: 10,
 });
 
 db.connect((err) => {
