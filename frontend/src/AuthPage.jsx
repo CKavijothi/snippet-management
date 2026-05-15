@@ -4,7 +4,7 @@ import { FiEye, FiEyeOff } from "react-icons/fi";
 import { useAuth } from "./AuthContext";
 import "./Auth.css";
 
-const API_URL = "https://snippet-management-production.up.railway.app";
+const API_URL = process.env.REACT_APP_API_URL
 
 /* GOOGLE SIGN IN */
 
