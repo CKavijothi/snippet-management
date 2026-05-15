@@ -833,7 +833,7 @@ body {
 }
 
 /* Main Save Button */
-button:not(.filter-btn):not(.navbar-logout):not(.searchBox button):not(.actions button):not(.restore-btn):not(.modal-close):not(.save-edit):not(.cancel-edit) {
+button:not(.filter-btn):not(.navbar-logout):not(.password-toggle):not(.searchBox button):not(.actions button):not(.restore-btn):not(.modal-close):not(.save-edit):not(.cancel-edit) {
   background: linear-gradient(135deg, #6366f1, #a78bfa);
   border: none;
   color: white;

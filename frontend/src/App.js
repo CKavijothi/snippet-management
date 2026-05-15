@@ -3,7 +3,7 @@ import axios from "axios";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { useAuth } from "./AuthContext";
-import AuthPage from "./AuthPage";
+import PrivateRoute from "./PrivateRoute";
 import "./App.css";
 
 // ✅ Block any accidental window.print() calls from libraries (e.g. Pyodide)
@@ -16,16 +16,16 @@ const API_URL = "https://snippet-management-production.up.railway.app";
 const api = (token) =>
   axios.create({
     baseURL: API_URL,
-    headers: { Authorization: `Bearer ${token}` }
+    headers: { Authorization: `Bearer ${token}` },
   });
 
-function App() {
+// ─── Authenticated app shell ──────────────────────────────────────────────
+function AppShell() {
   const { user, token, logout } = useAuth();
 
   const [snippets, setSnippets] = useState([]);
   const [title, setTitle] = useState("");
   const [code, setCode] = useState("");
-  // ✅ FIX 1: language is now stateful so it updates when user selects
   const [language, setLanguage] = useState("javascript");
   const [isPublic, setIsPublic] = useState(false);
   const [tags, setTags] = useState("");
@@ -46,22 +46,33 @@ function App() {
     try {
       const res = await api(token).get(`/api/snippets?search=${searchText}`);
       setSnippets(res.data || []);
-    } catch (err) { console.log(err); }
+    } catch (err) {
+      console.log(err);
+    }
   };
 
-  useEffect(() => { if (user) fetchSnippets(""); }, [user]);
-
-  if (!user) return <AuthPage />;
+  useEffect(() => {
+    if (user) fetchSnippets("");
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const addSnippet = async () => {
     if (!title || !code) return alert("Fill all fields");
-    const tagList = tags.split(",").map(t => t.trim()).filter(Boolean);
+    const tagList = tags
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
     await api(token).post("/api/snippets", {
-      title, code, language, is_public: isPublic,
+      title,
+      code,
+      language,
+      is_public: isPublic,
       tags: tagList,
-      expires_in: expiresIn ? parseInt(expiresIn) : 0
+      expires_in: expiresIn ? parseInt(expiresIn) : 0,
     });
-    setTitle(""); setCode(""); setTags(""); setExpiresIn("");
+    setTitle("");
+    setCode("");
+    setTags("");
+    setExpiresIn("");
     fetchSnippets(search);
   };
 
@@ -72,7 +83,7 @@ function App() {
 
   const toggleVisibility = async (snippet) => {
     await api(token).patch(`/api/snippets/${snippet.id}/visibility`, {
-      is_public: !snippet.is_public
+      is_public: !snippet.is_public,
     });
     fetchSnippets(search);
   };
@@ -85,7 +96,8 @@ function App() {
 
   const saveEdit = async (id) => {
     await api(token).put(`/api/snippets/${id}`, {
-      title: editTitle, code: editCode
+      title: editTitle,
+      code: editCode,
     });
     setEditingId(null);
     fetchSnippets(search);
@@ -105,30 +117,22 @@ function App() {
     alert("Version restored!");
   };
 
-  // ✅ FIX 2: runCode uses sandboxed iframe instead of eval()
   const runCode = async (id, codeText, lang) => {
     if (lang === "html") {
-      // HTML is already shown in iframe in the output section, nothing to do
-      setOutputs(prev => ({ ...prev, [id]: "__html__" }));
+      setOutputs((prev) => ({ ...prev, [id]: "__html__" }));
       return;
     }
 
     if (lang === "javascript") {
-      setOutputs(prev => ({ ...prev, [id]: "Running..." }));
+      setOutputs((prev) => ({ ...prev, [id]: "Running..." }));
 
-      // Remove any existing iframe for this snippet
       const existing = document.getElementById(`run-frame-${id}`);
       if (existing) existing.remove();
 
       const iframe = document.createElement("iframe");
       iframe.id = `run-frame-${id}`;
-      iframe.sandbox = "allow-scripts"; // ✅ sandboxed — no print, no page access
+      iframe.sandbox = "allow-scripts";
       iframe.style.display = "none";
-
-      // Capture console.log and errors inside the iframe
-      const escaped = codeText
-        .replace(/\\/g, "\\\\")
-        .replace(/`/g, "\\`");
 
       iframe.srcdoc = `
         <script>
@@ -150,51 +154,60 @@ function App() {
     }
 
     if (lang === "python") {
-      setOutputs(prev => ({ ...prev, [id]: "Loading Python runtime..." }));
+      setOutputs((prev) => ({ ...prev, [id]: "Loading Python runtime..." }));
       try {
-        // ✅ Inject Pyodide script tag only once if not already loaded
         if (!window.loadPyodide) {
           await new Promise((resolve, reject) => {
             const existing = document.getElementById("pyodide-script");
-            if (existing) { resolve(); return; }
+            if (existing) {
+              resolve();
+              return;
+            }
             const script = document.createElement("script");
             script.id = "pyodide-script";
-            script.src = "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js";
+            script.src =
+              "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js";
             script.onload = resolve;
-            script.onerror = () => reject(new Error("Failed to load Pyodide script"));
+            script.onerror = () =>
+              reject(new Error("Failed to load Pyodide script"));
             document.head.appendChild(script);
           });
         }
 
-        // ✅ Wait until loadPyodide is available
         if (!pyodide && !pyodideLoading) {
           pyodideLoading = true;
-          setOutputs(prev => ({ ...prev, [id]: "Initializing Python (first run takes ~5s)..." }));
+          setOutputs((prev) => ({
+            ...prev,
+            [id]: "Initializing Python (first run takes ~5s)...",
+          }));
           pyodide = await window.loadPyodide({
-            indexURL: "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/"
+            indexURL: "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/",
           });
           pyodideLoading = false;
         }
 
-        // Reset stdout/stderr
-        await pyodide.runPythonAsync(`import sys, io\nsys.stdout = io.StringIO()\nsys.stderr = io.StringIO()`);
+        await pyodide.runPythonAsync(
+          `import sys, io\nsys.stdout = io.StringIO()\nsys.stderr = io.StringIO()`
+        );
         await pyodide.runPythonAsync(codeText);
         const out = await pyodide.runPythonAsync("sys.stdout.getvalue()");
         const err = await pyodide.runPythonAsync("sys.stderr.getvalue()");
-        setOutputs(prev => ({ ...prev, [id]: out || err || "No output" }));
+        setOutputs((prev) => ({ ...prev, [id]: out || err || "No output" }));
       } catch (err) {
-        setOutputs(prev => ({ ...prev, [id]: "Python Error: " + err.message }));
+        setOutputs((prev) => ({
+          ...prev,
+          [id]: "Python Error: " + err.message,
+        }));
       }
     }
   };
 
-  // ✅ FIX 3: Listen for postMessage from sandboxed iframe
+  // Listen for postMessage from sandboxed iframes
   useEffect(() => {
     const handler = (event) => {
       if (event.data && event.data.snippetId !== undefined) {
         const { snippetId, output } = event.data;
-        setOutputs(prev => ({ ...prev, [snippetId]: output }));
-        // Clean up the hidden iframe
+        setOutputs((prev) => ({ ...prev, [snippetId]: output }));
         const iframe = document.getElementById(`run-frame-${snippetId}`);
         if (iframe) iframe.remove();
       }
@@ -212,7 +225,7 @@ function App() {
     return h > 0 ? `Expires in ${h}h ${m}m` : `Expires in ${m}m`;
   };
 
-  const filtered = snippets.filter(s => {
+  const filtered = snippets.filter((s) => {
     if (filter === "mine") return Number(s.user_id) === Number(user.id);
     if (filter === "public") return s.is_public;
     return true;
@@ -220,16 +233,28 @@ function App() {
 
   return (
     <div className="app">
-
       {versionsFor && (
         <div className="modal-overlay" onClick={() => setVersionsFor(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>📜 Version History — {versionsTitle}</h3>
-              <button className="modal-close" onClick={() => setVersionsFor(null)}>✕</button>
+              <button
+                className="modal-close"
+                onClick={() => setVersionsFor(null)}
+              >
+                ✕
+              </button>
             </div>
             {versions.length === 0 ? (
-              <p style={{color:"#94a3b8",padding:"40px", textAlign:"center"}}>No versions saved yet.</p>
+              <p
+                style={{
+                  color: "#94a3b8",
+                  padding: "40px",
+                  textAlign: "center",
+                }}
+              >
+                No versions saved yet.
+              </p>
             ) : (
               versions.map((v) => (
                 <div className="version-item" key={v.id}>
@@ -245,7 +270,10 @@ function App() {
                       ↩ Restore
                     </button>
                   </div>
-                  <pre className="version-code">{v.code.slice(0, 300)}{v.code.length > 300 ? "..." : ""}</pre>
+                  <pre className="version-code">
+                    {v.code.slice(0, 300)}
+                    {v.code.length > 300 ? "..." : ""}
+                  </pre>
                 </div>
               ))
             )}
@@ -256,8 +284,21 @@ function App() {
       <div className="navbar">
         <span>🚀 Snippet Manager</span>
         <div className="navbar-right">
-          <span className="navbar-user">👤 {user.name}</span>
-          <button className="navbar-logout" onClick={logout}>Logout</button>
+          <span className="navbar-user">
+            {user.picture ? (
+              <img
+                src={user.picture}
+                alt={user.name}
+                className="navbar-avatar"
+              />
+            ) : (
+              "👤"
+            )}{" "}
+            {user.name}
+          </span>
+          <button className="navbar-logout" onClick={logout}>
+            Logout
+          </button>
         </div>
       </div>
 
@@ -271,7 +312,7 @@ function App() {
       </div>
 
       <div className="filter-row">
-        {["all", "mine", "public"].map(f => (
+        {["all", "mine", "public"].map((f) => (
           <button
             key={f}
             className={`filter-btn ${filter === f ? "active" : ""}`}
@@ -283,10 +324,17 @@ function App() {
       </div>
 
       <div className="form">
-        <input placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
-        <input placeholder="Tags (comma-separated)" value={tags} onChange={(e) => setTags(e.target.value)} />
+        <input
+          placeholder="Title"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
+        <input
+          placeholder="Tags (comma-separated)"
+          value={tags}
+          onChange={(e) => setTags(e.target.value)}
+        />
         <div className="form-row">
-          {/* ✅ FIX 1: language select now uses value + onChange */}
           <select
             className="language-select"
             value={language}
@@ -296,7 +344,11 @@ function App() {
             <option value="python">python</option>
             <option value="html">html</option>
           </select>
-          <select value={expiresIn} onChange={(e) => setExpiresIn(e.target.value)} className="language-select">
+          <select
+            value={expiresIn}
+            onChange={(e) => setExpiresIn(e.target.value)}
+            className="language-select"
+          >
             <option value="">⏳ No Expiry</option>
             <option value="1">⏱ Expires in 1 hour</option>
             <option value="6">⏱ Expires in 6 hours</option>
@@ -305,10 +357,18 @@ function App() {
             <option value="168">⏱ Expires in 1 week</option>
           </select>
         </div>
-        <textarea placeholder="Write code..." value={code} onChange={(e) => setCode(e.target.value)} />
+        <textarea
+          placeholder="Write code..."
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+        />
         <div className="visibility-row">
           <label className="toggle-label">
-            <input type="checkbox" checked={isPublic} onChange={(e) => setIsPublic(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={isPublic}
+              onChange={(e) => setIsPublic(e.target.checked)}
+            />
             <span>{isPublic ? "🔓 Public" : "🔒 Private"}</span>
           </label>
           <button onClick={addSnippet}>Save Snippet</button>
@@ -321,13 +381,15 @@ function App() {
             <div
               className="card"
               key={s.id}
-              style={{animationDelay: `${index * 0.15}s`}}
+              style={{ animationDelay: `${index * 0.15}s` }}
             >
               <div className="cardHeader">
                 <h3>{s.title}</h3>
                 <div className="card-meta">
                   <span className="lang-badge">{s.language}</span>
-                  <span className={`vis-badge ${s.is_public ? "public" : "private"}`}>
+                  <span
+                    className={`vis-badge ${s.is_public ? "public" : "private"}`}
+                  >
                     {s.is_public ? "🔓 Public" : "🔒 Private"}
                   </span>
                 </div>
@@ -335,7 +397,8 @@ function App() {
 
               <div className="card-sub">
                 <span className="author">
-                  by {s.author_name}{Number(s.user_id) === Number(user.id) ? " (you)" : ""}
+                  by {s.author_name}
+                  {Number(s.user_id) === Number(user.id) ? " (you)" : ""}
                 </span>
                 {s.expires_at && (
                   <span className="expiry-badge">
@@ -359,7 +422,10 @@ function App() {
                     placeholder="Edit code..."
                   />
                   <div className="edit-actions">
-                    <button className="save-edit" onClick={() => saveEdit(s.id)}>
+                    <button
+                      className="save-edit"
+                      onClick={() => saveEdit(s.id)}
+                    >
                       💾 Save Changes
                     </button>
                     <button
@@ -391,13 +457,22 @@ function App() {
                       <button className="edit-btn" onClick={() => startEdit(s)}>
                         ✏ Edit
                       </button>
-                      <button className="history-btn" onClick={() => openVersions(s)}>
+                      <button
+                        className="history-btn"
+                        onClick={() => openVersions(s)}
+                      >
                         📜 History
                       </button>
-                      <button className="toggle-vis" onClick={() => toggleVisibility(s)}>
+                      <button
+                        className="toggle-vis"
+                        onClick={() => toggleVisibility(s)}
+                      >
                         {s.is_public ? "🔒 Make Private" : "🔓 Make Public"}
                       </button>
-                      <button className="delete" onClick={() => deleteSnippet(s.id)}>
+                      <button
+                        className="delete"
+                        onClick={() => deleteSnippet(s.id)}
+                      >
                         🗑 Delete
                       </button>
                     </>
@@ -432,6 +507,15 @@ function App() {
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Root — wraps AppShell in PrivateRoute ────────────────────────────────
+function App() {
+  return (
+    <PrivateRoute>
+      <AppShell />
+    </PrivateRoute>
   );
 }
 
