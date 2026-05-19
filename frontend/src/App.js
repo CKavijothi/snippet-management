@@ -21,7 +21,7 @@ const api = (token) =>
 
 // ─── Authenticated app shell ──────────────────────────────────────────────
 function AppShell() {
-  const { user, token, logout } = useAuth();
+  const { user, token, logout, sessionWarning, setSessionWarning } = useAuth();
 
   const [snippets, setSnippets] = useState([]);
   const [title, setTitle] = useState("");
@@ -233,6 +233,29 @@ function AppShell() {
 
   return (
     <div className="app">
+
+      {/* ── NEW: Session expiry warning banner ─────────────────────────── */}
+      {sessionWarning && (
+        <div className="session-warning-banner">
+          <span>⚠️ Your session expires in 2 minutes.</span>
+          <div className="session-warning-actions">
+            <button
+              className="session-warn-dismiss"
+              onClick={() => setSessionWarning(false)}
+            >
+              Dismiss
+            </button>
+            <button
+              className="session-warn-logout"
+              onClick={() => logout("expired")}
+            >
+              Logout now
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Version History Modal */}
       {versionsFor && (
         <div className="modal-overlay" onClick={() => setVersionsFor(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -281,36 +304,35 @@ function AppShell() {
         </div>
       )}
 
+      {/* ── Navbar ─────────────────────────────────────────────────────── */}
       <div className="navbar">
-        <span>🚀 Snippet Manager</span>
+        <span className="navbar-brand">🚀 Snippet Manager</span>
         <div className="navbar-right">
-          <span className="navbar-user">
-            {user.picture ? (
-              <img
-                src={user.picture}
-                alt={user.name}
-                className="navbar-avatar"
-              />
-            ) : (
-              "👤"
-            )}{" "}
-            {user.name}
-          </span>
-          <button className="navbar-logout" onClick={logout}>
+          <div className="navbar-user">
+            {/* Always show first letter of name — no profile picture */}
+            <div className="navbar-avatar-circle">
+              {user.name?.slice(0, 1).toUpperCase()}
+            </div>
+            <span className="navbar-username">{user.name}</span>
+          </div>
+          <button className="navbar-logout" onClick={() => logout()}>
             Logout
           </button>
         </div>
       </div>
 
+      {/* Search */}
       <div className="searchBox">
         <input
           placeholder="🔍 Search snippets..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && fetchSnippets(search)}
         />
         <button onClick={() => fetchSnippets(search)}>Search</button>
       </div>
 
+      {/* Filter row */}
       <div className="filter-row">
         {["all", "mine", "public"].map((f) => (
           <button
@@ -323,6 +345,7 @@ function AppShell() {
         ))}
       </div>
 
+      {/* Add snippet form */}
       <div className="form">
         <input
           placeholder="Title"
@@ -375,6 +398,7 @@ function AppShell() {
         </div>
       </div>
 
+      {/* Snippets list */}
       <div className="app-main">
         <div className="card-container">
           {filtered.map((s, index) => (

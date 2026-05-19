@@ -4,9 +4,9 @@ import { FiEye, FiEyeOff } from "react-icons/fi";
 import { useAuth } from "./AuthContext";
 import "./Auth.css";
 
-const API_URL = process.env.REACT_APP_API_URL
+const API_URL = process.env.REACT_APP_API_URL;
 
-/* GOOGLE SIGN IN */
+/* ── Google Sign-In Button ─────────────────────────────────────────────── */
 
 function GoogleSignInButton({ onSuccess, onError }) {
   const onSuccessRef = useRef(onSuccess);
@@ -50,13 +50,11 @@ function GoogleSignInButton({ onSuccess, onError }) {
       );
     }
 
-    // If already loaded
     if (window.google?.accounts?.id) {
       initGoogle();
       return;
     }
 
-    // Avoid duplicate script tags
     if (document.getElementById("google-gis-script")) {
       document.getElementById("google-gis-script")
         .addEventListener("load", initGoogle);
@@ -70,127 +68,88 @@ function GoogleSignInButton({ onSuccess, onError }) {
     script.defer = true;
     script.onload = initGoogle;
     document.head.appendChild(script);
-
-  }, []); // ← empty deps: runs ONCE only
+  }, []);
 
   if (!process.env.REACT_APP_GOOGLE_CLIENT_ID) return null;
 
   return <div id="google-signin-btn" className="google-btn-wrapper" />;
 }
 
-/* DIVIDER */
+/* ── OR Divider ────────────────────────────────────────────────────────── */
 
 function OrDivider() {
   return (
     <div className="auth-or">
-      <span className="auth-or-line"></span>
-
+      <span className="auth-or-line" />
       <span className="auth-or-text">OR</span>
-
-      <span className="auth-or-line"></span>
+      <span className="auth-or-line" />
     </div>
   );
 }
 
-/* MAIN */
+/* ── Main AuthPage ─────────────────────────────────────────────────────── */
 
-export default function AuthPage() {
+export default function AuthPage({ expiredMessage = "" }) {
   const { login } = useAuth();
 
   const [mode, setMode] = useState("login");
-
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    password: "",
-  });
-
+  const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [errors, setErrors] = useState({});
-
   const [serverError, setServerError] = useState("");
-
   const [loading, setLoading] = useState(false);
-
   const [showPassword, setShowPassword] = useState(false);
 
-  /* SWITCH MODE */
+  // Clear session storage once the expired message is shown
+  useEffect(() => {
+    if (expiredMessage) {
+      sessionStorage.removeItem("logout_reason");
+    }
+  }, [expiredMessage]);
 
+  /* Switch mode */
   const switchMode = (newMode) => {
     setMode(newMode);
-
-    setForm({
-      name: "",
-      email: "",
-      password: "",
-    });
-
+    setForm({ name: "", email: "", password: "" });
     setErrors({});
     setServerError("");
   };
 
-  /* INPUT */
-
+  /* Input handler */
   const handle = (e) => {
-    setForm({
-      ...form,
-      [e.target.name]: e.target.value,
-    });
-
+    setForm({ ...form, [e.target.name]: e.target.value });
     if (errors[e.target.name]) {
-      setErrors({
-        ...errors,
-        [e.target.name]: "",
-      });
+      setErrors({ ...errors, [e.target.name]: "" });
     }
   };
 
-  /* VALIDATION */
-
+  /* Validation */
   const validate = () => {
     const errs = {};
-
-    if (
-      mode === "register" &&
-      !form.name.trim()
-    ) {
+    if (mode === "register" && !form.name.trim()) {
       errs.name = "Full name is required";
     }
-
     if (!form.email.trim()) {
       errs.email = "Email is required";
-    } else if (
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)
-    ) {
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
       errs.email = "Enter valid email";
     }
-
     if (!form.password) {
       errs.password = "Password is required";
-    } else if (
-      mode === "register" &&
-      form.password.length < 6
-    ) {
-      errs.password =
-        "Password must be at least 6 characters";
+    } else if (mode === "register" && form.password.length < 6) {
+      errs.password = "Password must be at least 6 characters";
     }
-
     return errs;
   };
 
-  /* SUBMIT */
-
+  /* Submit */
   const submit = async () => {
     setServerError("");
-
     const errs = validate();
-
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
       return;
     }
-
     setLoading(true);
-
     try {
       const endpoint =
         mode === "login"
@@ -199,105 +158,72 @@ export default function AuthPage() {
 
       const payload =
         mode === "login"
-          ? {
-              email: form.email,
-              password: form.password,
-            }
-          : {
-              name: form.name,
-              email: form.email,
-              password: form.password,
-            };
+          ? { email: form.email, password: form.password }
+          : { name: form.name, email: form.email, password: form.password };
 
-      const res = await axios.post(
-        endpoint,
-        payload
-      );
-
+      const res = await axios.post(endpoint, payload);
       login(res.data.user, res.data.token);
-
     } catch (err) {
       setServerError(
-        err.response?.data?.message ||
-        "Something went wrong"
+        err.response?.data?.message || "Something went wrong"
       );
     } finally {
       setLoading(false);
     }
   };
 
-  /* GOOGLE */
-
-  const handleGoogleSuccess = (user, token) => {
-    login(user, token);
-  };
-
-  const handleGoogleError = (msg) => {
-    setServerError(msg);
-  };
+  /* Google handlers */
+  const handleGoogleSuccess = (user, token) => login(user, token);
+  const handleGoogleError = (msg) => setServerError(msg);
 
   return (
     <div className="auth-bg">
       <div className="auth-card">
 
-        {/* LOGO */}
-
+        {/* Logo */}
         <div className="auth-logo">
-          <span className="auth-logo-icon">
-            ⌨
-          </span>
-
-          <span className="auth-logo-text">
-            Snippet Manager
-          </span>
+          <span className="auth-logo-icon">⌨</span>
+          <span className="auth-logo-text">Snippet Manager</span>
         </div>
 
-        {/* TABS */}
+        {/* ── NEW: Session expired banner ─────────────────────────────── */}
+        {expiredMessage && (
+          <div className="auth-session-expired">
+            🔒 {expiredMessage}
+          </div>
+        )}
 
+        {/* Tabs */}
         <div className="auth-tabs">
-
           <button
-            className={`auth-tab ${
-              mode === "login" ? "active" : ""
-            }`}
+            className={`auth-tab ${mode === "login" ? "active" : ""}`}
             onClick={() => switchMode("login")}
           >
             Sign In
           </button>
-
           <button
-            className={`auth-tab ${
-              mode === "register" ? "active" : ""
-            }`}
+            className={`auth-tab ${mode === "register" ? "active" : ""}`}
             onClick={() => switchMode("register")}
           >
             Register
           </button>
-
         </div>
 
-        {/* GOOGLE */}
-
+        {/* Google */}
         <GoogleSignInButton
           onSuccess={handleGoogleSuccess}
           onError={handleGoogleError}
         />
 
-        {process.env.REACT_APP_GOOGLE_CLIENT_ID && (
-          <OrDivider />
-        )}
+        {process.env.REACT_APP_GOOGLE_CLIENT_ID && <OrDivider />}
 
-        {/* FORM */}
-
+        {/* Form */}
         <div className="auth-form">
 
-          {/* NAME */}
-
+          {/* Name (register only) */}
           {mode === "register" && (
             <div className="auth-field">
-
               <label>FULL NAME</label>
-
               <input
                 type="text"
                 name="name"
@@ -305,22 +231,15 @@ export default function AuthPage() {
                 value={form.name}
                 onChange={handle}
               />
-
               {errors.name && (
-                <span className="field-error">
-                  {errors.name}
-                </span>
+                <span className="field-error">{errors.name}</span>
               )}
-
             </div>
           )}
 
-          {/* EMAIL */}
-
+          {/* Email */}
           <div className="auth-field">
-
             <label>EMAIL</label>
-
             <input
               type="email"
               name="email"
@@ -328,75 +247,46 @@ export default function AuthPage() {
               value={form.email}
               onChange={handle}
             />
-
             {errors.email && (
-              <span className="field-error">
-                {errors.email}
-              </span>
+              <span className="field-error">{errors.email}</span>
             )}
-
           </div>
 
-
-{/* PASSWORD */}
-
-<div className="auth-field">
-
-  <label>PASSWORD</label>
-
-  <div className="password-wrapper">
-
-    <input
-      id="password"
-      name="password"
-      type={showPassword ? "text" : "password"}
-      autoComplete={
-        mode === "login"
-          ? "current-password"
-          : "new-password"
-      }
-      placeholder="••••••••"
-      value={form.password}
-      onChange={handle}
-      onKeyDown={(e) =>
-        e.key === "Enter" && submit()
-      }
-    />
-
-    <button
-      type="button"
-      className="password-toggle"
-      onClick={() =>
-        setShowPassword(!showPassword)
-      }
-    >
-      {showPassword ? (
-        <FiEyeOff />
-      ) : (
-        <FiEye />
-      )}
-    </button>
-
-  </div>
-
-  {errors.password && (
-    <span className="field-error">
-      {errors.password}
-    </span>
-  )}
-
-</div>
-
-          {/* ERROR */}
-
-          {serverError && (
-            <div className="auth-error">
-              ⚠ {serverError}
+          {/* Password */}
+          <div className="auth-field">
+            <label>PASSWORD</label>
+            <div className="password-wrapper">
+              <input
+                id="password"
+                name="password"
+                type={showPassword ? "text" : "password"}
+                autoComplete={
+                  mode === "login" ? "current-password" : "new-password"
+                }
+                placeholder="••••••••"
+                value={form.password}
+                onChange={handle}
+                onKeyDown={(e) => e.key === "Enter" && submit()}
+              />
+              <button
+                type="button"
+                className="password-toggle"
+                onClick={() => setShowPassword(!showPassword)}
+              >
+                {showPassword ? <FiEyeOff /> : <FiEye />}
+              </button>
             </div>
+            {errors.password && (
+              <span className="field-error">{errors.password}</span>
+            )}
+          </div>
+
+          {/* Server error */}
+          {serverError && (
+            <div className="auth-error">⚠ {serverError}</div>
           )}
 
-          {/* SUBMIT */}
-
+          {/* Submit */}
           <button
             className="auth-submit"
             onClick={submit}
@@ -411,38 +301,22 @@ export default function AuthPage() {
 
         </div>
 
-        {/* SWITCH */}
-
+        {/* Switch mode */}
         <p className="auth-switch">
-
           {mode === "login" ? (
             <>
-              Don’t have an account?{" "}
-              <span
-                onClick={() =>
-                  switchMode("register")
-                }
-              >
-                Register free
-              </span>
+              Don't have an account?{" "}
+              <span onClick={() => switchMode("register")}>Register free</span>
             </>
           ) : (
             <>
               Already have an account?{" "}
-              <span
-                onClick={() =>
-                  switchMode("login")
-                }
-              >
-                Sign In
-              </span>
+              <span onClick={() => switchMode("login")}>Sign In</span>
             </>
           )}
-
         </p>
 
       </div>
     </div>
-  
   );
 }
