@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import axios from "axios";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -32,6 +32,8 @@ function AppShell() {
   const [expiresIn, setExpiresIn] = useState("");
   const [search, setSearch] = useState("");
   const [outputs, setOutputs] = useState({});
+  // ✅ Ref stores live output per snippet id — avoids stale closure in window._pyAppendOutput
+  const outputRef = useRef({});
   const [filter, setFilter] = useState("all");
 
   const [editingId, setEditingId] = useState(null);
@@ -117,35 +119,62 @@ function AppShell() {
     alert("Version restored!");
   };
 
+  // ── Run Code ───────────────────────────────────────────────────────────────
   const runCode = async (id, codeText, lang) => {
+
+    // ── HTML: render inline via srcDoc iframe ──────────────────────────────
     if (lang === "html") {
       setOutputs((prev) => ({ ...prev, [id]: "__html__" }));
       return;
     }
 
+    // ── JavaScript: sandboxed iframe with streaming console + alert/confirm/prompt ──
     if (lang === "javascript") {
-      setOutputs((prev) => ({ ...prev, [id]: "Running..." }));
+      setOutputs((prev) => ({ ...prev, [id]: "" }));
 
+      // Remove any previous iframe for this snippet
       const existing = document.getElementById(`run-frame-${id}`);
       if (existing) existing.remove();
 
       const iframe = document.createElement("iframe");
       iframe.id = `run-frame-${id}`;
-      iframe.sandbox = "allow-scripts";
-      iframe.style.display = "none";
+      // allow-modals enables alert(), confirm(), prompt()
+      iframe.sandbox = "allow-scripts allow-modals";
+      iframe.style.cssText =
+        "display:none;width:0;height:0;border:none;position:absolute;";
 
       iframe.srcdoc = `
         <script>
-          const logs = [];
-          const _log = console.log;
-          console.log = (...args) => { logs.push(args.map(String).join(" ")); };
-          console.error = (...args) => { logs.push("ERROR: " + args.map(String).join(" ")); };
+          // Stream each console call to parent immediately
+          const send = (line) => {
+            window.parent.postMessage({ snippetId: ${id}, chunk: line + "\\n" }, "*");
+          };
+
+          console.log = (...args) =>
+            send(args.map(a =>
+              typeof a === "object" ? JSON.stringify(a, null, 2) : String(a)
+            ).join(" "));
+
+          console.error = (...args) =>
+            send("ERROR: " + args.map(String).join(" "));
+
+          console.warn = (...args) =>
+            send("WARN: " + args.map(String).join(" "));
+
+          console.info = (...args) =>
+            send("INFO: " + args.map(String).join(" "));
+
+          // Run user code — alert/confirm/prompt work natively via allow-modals
           try {
             ${codeText}
-          } catch(e) {
-            logs.push("Error: " + e.message);
+          } catch (e) {
+            send("Error: " + e.message);
           }
-          window.parent.postMessage({ snippetId: ${id}, output: logs.join("\\n") || "No output" }, "*");
+
+          // After 15s send done to auto-cleanup iframe
+          setTimeout(() => {
+            window.parent.postMessage({ snippetId: ${id}, done: true }, "*");
+          }, 15000);
         <\/script>
       `;
 
@@ -153,16 +182,15 @@ function AppShell() {
       return;
     }
 
+    // ── Python: Pyodide WASM runtime with live streaming output ──────────
     if (lang === "python") {
       setOutputs((prev) => ({ ...prev, [id]: "Loading Python runtime..." }));
       try {
+        // Load Pyodide script tag if not already loaded
         if (!window.loadPyodide) {
           await new Promise((resolve, reject) => {
             const existing = document.getElementById("pyodide-script");
-            if (existing) {
-              resolve();
-              return;
-            }
+            if (existing) { resolve(); return; }
             const script = document.createElement("script");
             script.id = "pyodide-script";
             script.src =
@@ -174,6 +202,7 @@ function AppShell() {
           });
         }
 
+        // Initialize Pyodide once (first run takes ~5s)
         if (!pyodide && !pyodideLoading) {
           pyodideLoading = true;
           setOutputs((prev) => ({
@@ -186,28 +215,158 @@ function AppShell() {
           pyodideLoading = false;
         }
 
-        await pyodide.runPythonAsync(
-          `import sys, io\nsys.stdout = io.StringIO()\nsys.stderr = io.StringIO()`
-        );
+        // Clear output box before running
+        setOutputs((prev) => ({ ...prev, [id]: "" }));
+
+        // ✅ Use a ref to accumulate output — avoids stale closure problem
+        // window._pyAppendOutput is called synchronously by Python on each print()
+        outputRef.current[id] = "";
+        window._pyAppendOutput = (text) => {
+          outputRef.current[id] = (outputRef.current[id] || "") + text;
+          // Force React to re-render by spreading the ref value into state
+          setOutputs((prev) => ({ ...prev, [id]: outputRef.current[id] }));
+        };
+
+        // Patch stdout, stderr, input() and time.sleep() before every run
+        await pyodide.runPythonAsync(`
+import sys, io, builtins, time
+from js import window
+
+# Custom stdout that streams each write() call to React state immediately
+class _LiveStream:
+    def __init__(self):
+        self._buf = ""
+    def write(self, text):
+        self._buf += text
+        # Flush line-by-line so output appears as each print() fires
+        while "\\n" in self._buf:
+            line, self._buf = self._buf.split("\\n", 1)
+            window._pyAppendOutput(line + "\\n")
+    def flush(self):
+        if self._buf:
+            window._pyAppendOutput(self._buf)
+            self._buf = ""
+    def getvalue(self):
+        return ""
+
+sys.stdout = _LiveStream()
+sys.stderr = _LiveStream()
+
+# Patch input() to use browser prompt() dialog
+def _patched_input(prompt=""):
+    sys.stdout.flush()
+    result = window.prompt(str(prompt))
+    if result is None:
+        return ""
+    # Echo prompt + answer into live output
+    sys.stdout.write(str(prompt) + result + "\\n")
+    return result
+
+builtins.input = _patched_input
+
+# Patch time.sleep() to no-op with a notice (sleep freezes the browser)
+def _patched_sleep(seconds):
+    sys.stdout.write(f"[sleep({seconds}s) skipped in browser]\\n")
+
+time.sleep = _patched_sleep
+        `);
+
+        // Run the actual user code — output streams live via _LiveStream
         await pyodide.runPythonAsync(codeText);
-        const out = await pyodide.runPythonAsync("sys.stdout.getvalue()");
-        const err = await pyodide.runPythonAsync("sys.stderr.getvalue()");
-        setOutputs((prev) => ({ ...prev, [id]: out || err || "No output" }));
-      } catch (err) {
+
+        // Flush any remaining buffered output
+        await pyodide.runPythonAsync("sys.stdout.flush(); sys.stderr.flush()");
+
+        // If nothing was printed, show "No output"
         setOutputs((prev) => ({
           ...prev,
-          [id]: "Python Error: " + err.message,
+          [id]: outputRef.current[id] || "No output",
         }));
+
+      } catch (err) {
+        // Strip long internal Pyodide traceback — show only user-relevant part
+        const msg = err.message || String(err);
+        const clean = msg.includes('File "<exec>"')
+          ? msg.slice(msg.indexOf('File "<exec>"'))
+          : msg;
+        setOutputs((prev) => ({ ...prev, [id]: (prev[id] || "") + "\nError:\n" + clean }));
       }
+      return;
+    }
+
+    // ── Server-side SSE streaming fallback (for future languages) ─────────
+    setOutputs((prev) => ({ ...prev, [id]: "Running..." }));
+    try {
+      const response = await fetch(`${API_URL}/api/run`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ code: codeText, language: lang }),
+      });
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      setOutputs((prev) => ({ ...prev, [id]: "" }));
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const text = decoder.decode(value, { stream: true });
+        // SSE events are separated by double newlines
+        const events = text.split("\n\n").filter(Boolean);
+
+        for (const event of events) {
+          if (!event.startsWith("data: ")) continue;
+          let payload;
+          try {
+            payload = JSON.parse(event.slice(6));
+          } catch {
+            continue;
+          }
+
+          if (payload.chunk !== undefined) {
+            setOutputs((prev) => ({
+              ...prev,
+              [id]:
+                (prev[id] === "Running..." ? "" : prev[id] || "") +
+                payload.chunk,
+            }));
+          }
+          if (payload.done) break;
+        }
+      }
+    } catch (err) {
+      setOutputs((prev) => ({
+        ...prev,
+        [id]: "Run error: " + err.message,
+      }));
     }
   };
 
-  // Listen for postMessage from sandboxed iframes
+  // ── Listen for postMessage from sandboxed JS iframes ──────────────────────
   useEffect(() => {
     const handler = (event) => {
-      if (event.data && event.data.snippetId !== undefined) {
-        const { snippetId, output } = event.data;
+      if (!event.data || event.data.snippetId === undefined) return;
+      const { snippetId, chunk, output, done } = event.data;
+
+      if (chunk !== undefined) {
+        // Append each streamed chunk as it arrives
+        setOutputs((prev) => ({
+          ...prev,
+          [snippetId]:
+            (prev[snippetId] === "" || prev[snippetId] === "Running..."
+              ? ""
+              : prev[snippetId] || "") + chunk,
+        }));
+      } else if (output !== undefined) {
+        // Legacy single-shot output (fallback)
         setOutputs((prev) => ({ ...prev, [snippetId]: output }));
+      }
+
+      if (done) {
         const iframe = document.getElementById(`run-frame-${snippetId}`);
         if (iframe) iframe.remove();
       }
@@ -234,7 +393,7 @@ function AppShell() {
   return (
     <div className="app">
 
-      {/* ── NEW: Session expiry warning banner ─────────────────────────── */}
+      {/* ── Session expiry warning banner ───────────────────────────────── */}
       {sessionWarning && (
         <div className="session-warning-banner">
           <span>⚠️ Your session expires in 2 minutes.</span>
@@ -304,12 +463,11 @@ function AppShell() {
         </div>
       )}
 
-      {/* ── Navbar ─────────────────────────────────────────────────────── */}
+      {/* ── Navbar ──────────────────────────────────────────────────────── */}
       <div className="navbar">
         <span className="navbar-brand">🚀 Snippet Manager</span>
         <div className="navbar-right">
           <div className="navbar-user">
-            {/* Always show first letter of name — no profile picture */}
             <div className="navbar-avatar-circle">
               {user.name?.slice(0, 1).toUpperCase()}
             </div>
@@ -508,10 +666,11 @@ function AppShell() {
                 <div className="outputTitle">Output</div>
                 <div className="outputContent">
                   {s.language === "html" ? (
+                    // ✅ allow-modals enables alert/confirm/prompt in HTML snippets
                     <iframe
                       srcDoc={s.code}
                       title={`preview-${s.id}`}
-                      sandbox="allow-scripts"
+                      sandbox="allow-scripts allow-modals"
                     />
                   ) : (
                     <pre>{outputs[s.id] || "Click Run to see output"}</pre>
